@@ -1,5 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <math.h>
 
 typedef struct AST_Node {
     int isNumberFLG; //
@@ -49,13 +51,17 @@ void freeLL(token * ll);
 
                                                         //supporting functions
 int isNumber(char character);
-int getNum(char * input, int * inputIDX);
+int getNum(char * input, int * inputIDX, int Negative);
 
 
                                                         //stacks
-char *postFix(token * ll);
+char **postFix(token * ll);
 char getOperatorType(tokenType type);
 int precedanceCheck(char curOperator,char topStackOperator);
+
+                                                        // Postfix evaluation
+int postfixEval(char ** arr);
+void printPostfix(char ** arr);
 
 void push(char operator, stack * st);
 char  pop(stack * st);
@@ -64,23 +70,31 @@ char  peek(stack * st);
 int main(void)
 {
                                                          //get input and solution
-    printf("Equation: 2 + 3 * (4 -1) \nSolve the equation using\n 1.Infix \n 2.AST_tree\n");
+    printf("Equation: 2 + 3 * (4 - 1) \nSolve the equation using\n 1.Infix \n 2.AST_tree\n");
     char *input = "2 + 3 * (4 - 1)\0";                    // string to interpret
     int choose = 0;
-    scanf("%d",&choose);
+    //scanf("%d",&choose);
                                                         //get rid of spaces in input
                                                         //tokenized array & other set flag mem
-
-
     token *tokenLL = tokenize(input);
+    char ** postfix = postFix(tokenLL);
 
-    char * postfix = postFix(tokenLL);
+    printPostfix(postfix);
+
 
                                                         //free malloced memory
-    freeLL(tokenLL);
+
+
+    int IDX = 0;
+    while(postfix[IDX] != NULL) {
+        free(postfix[IDX]);
+        IDX++;
+    }
     free(postfix);
-
-
+    printf("postfix freed...\n");
+    freeLL(tokenLL);
+    printf("token LL freed...\n");
+    printf("done...\n");
     return 0;
 }
 
@@ -98,18 +112,28 @@ token * tokenize(char * input) {
     //input string counter
     int i = 0;
     while(input[i] != '\0') {
-        //number check
 
+
+
+        //blank space check
+        if(input[i] == ' ') {
+            i++;
+            continue; // skip blank spaces, don't evaluate as a token
+        }
+
+        //number check
         if(isNumber(input[i])) {
+
             cur->type = TOKEN_NUMBER;
-                                                                        // save number, account for numbers bigger than 1 digit
-            cur->value = getNum(input,&i);
+                                                                         // save number, account for numbers bigger than 1 digit
+            cur->value = getNum(input,&i, 1);
 
             cur-> next = malloc(sizeof(token));                      //reserve space for next node
             cur-> next->value = 0;
             cur-> next -> next = NULL;
             cur = cur->next;
         }
+
         //operator check
         else {
             cur->type = getToken(input[i]);
@@ -124,23 +148,26 @@ token * tokenize(char * input) {
             if(cur->type == TOKEN_MINUS && isNumber(input[i+1])) {
                 cur-> type = TOKEN_NUMBER;
                 i++;
-                cur-> value = getNum(input, &i);
+                cur-> value = getNum(input, &i, -1);
             }
-
                                                                             //reserve space for next node
             cur->next = malloc(sizeof(token));
             cur-> next->value = 0;
             cur-> next -> next = NULL;
             cur = cur->next;
 
+            i++;
         }
-        i++;
+
+
     }
+    //end reached, make current node an end token
+    cur->type = TOKEN_EOF;
     return head;
 }
 tokenType getToken(char  character) {
     switch (character) {
-        case 0x00:// NULL
+        case '\0':// NULL
             return TOKEN_EOF;
         case 0x2B:// +
             return TOKEN_PLUS;
@@ -168,7 +195,7 @@ int isNumber(char character) {
         return 1;
     return 0;
 }
-int getNum(char * input, int * inputIDX) {
+int getNum(char * input, int * inputIDX, int Negative) {
     int *i = inputIDX;
     int tempNumArr[21];
     int tempNum = 0;
@@ -180,9 +207,10 @@ int getNum(char * input, int * inputIDX) {
             (*i)++;
             Digits++;
         }
-        for(int j = Digits; j>=0;j--) {                       //create completed number using saved digits
-            tempNum+= tempNumArr[Digits-j] * 10*j;            //gets correct 10 exponent while getting correct spot in arr(digits-j)
+        for(int j = Digits-1; j>=0;j--) {                       //create completed number using saved digits
+            tempNum+= tempNumArr[j] * pow(10,j);//TODO ISSUE WITH NUM CALCULATION * 10             //gets correct 10 exponent while getting correct spot in arr(digits-j)
         }
+        tempNum *= Negative;                                  // Negative set to -1 if number is negative and 1 if positve
     }
     else {
                                                              // error handling, if given input is not a number
@@ -192,15 +220,16 @@ int getNum(char * input, int * inputIDX) {
 }
 
 //Postfix Function
-char * postFix(token *ll) {
+char * *postFix(token *ll) {
     stack * opStack = malloc(sizeof(stack));
     token *temp = ll;
-    char * postfixArr;                                          // arr to save completed postfix expression
+    char ** postfixArr;                                         //array of pointer to save each token
+    char buffer[20];                                            // used to hold current number or buffer we are working with
     int size = -1;                                              // stack size tracker
-    int postfixIDX = 0;                                             // for postfix arr
+    int postfixIDX = 0;                                         // for postfix arr
     char curOperator = 0;                                       // current operator to be put onto stack
     int curPrecedance = 0;                                      // used to determine realtion between cur operator and stack top operator
-                                                                //get maximum size of stack for operators
+                                                                 //get maximum size of stack for operators
     while(temp!=NULL) {
         size++;
         temp = temp->next;
@@ -208,13 +237,19 @@ char * postFix(token *ll) {
     free(temp);
     opStack->size = size;
     opStack->top = -1;
-    postfixArr = malloc(sizeof(char)*size);                  //properly size result, and stack arrays
+                                                                //properly size result, and stack arrays
+    postfixArr = malloc(sizeof(char * )*size);                  // sized for 'char *' not 'char', remember!!
     opStack->stackArr = malloc(sizeof(char )*size);
 
     while(ll!=NULL) {                                           //while there are tokens to be read
                                                                 //IF NUMBER
-        if(ll->type ==TOKEN_NUMBER) {                           //TODO ll might point to dealocated memory?
-            postfixArr[postfixIDX] = ll -> value;
+        if(ll->type ==TOKEN_NUMBER) {
+            //convert the integer 'value' to string
+            sprintf(buffer, "%d", ll->value);
+            //size new index accordingly + NULL terminator
+            //Note, strlen of buffer, not sizeof buffer
+            postfixArr[postfixIDX] = malloc(strlen(buffer)+1);
+            strcpy(postfixArr[postfixIDX], buffer);
             postfixIDX++;
         }
                                                                 //IF OPERATOR
@@ -223,9 +258,10 @@ char * postFix(token *ll) {
             if(opStack->top!=opStack->size) {
 
                 curOperator = getOperatorType(ll->type);                     //grab current operator
-                if(opStack->top == 0) {                                      // if stack is empty, PUSH current operator
+
+                if(opStack->top == -1) {                                      // if stack is empty, PUSH current operator
                     push(curOperator, opStack);
-                    postfixIDX++;
+                    //postfixIDX++;
                 }
 
                 else {
@@ -237,17 +273,23 @@ char * postFix(token *ll) {
                         case 2: //current operator is '(' or ')'
                             if(curOperator == ')') {                                 // close bracket logic
                                 while(opStack->stackArr[opStack->top] != '(') {      // pop stack until end bracket reached
-                                    postfixArr[postfixIDX] = pop(opStack);
+                                    postfixArr[postfixIDX] = malloc(2); //operator & NULL terminator
+                                    postfixArr[postfixIDX][0] = pop(opStack);
+                                    postfixArr[postfixIDX][1] = '\0';
                                     postfixIDX++;                                    // go to next index in postfix arr
-                                }                                                    //TODO: error if this doesn't break from the loop
+                                }                                                    // TODO: error if this doesn't break from the loop
                                 opStack->top--;                                      // remove ')' from stack
                             }
                             else {
-                                //curOperator is a staring bracket
+                                //curOperator is a starting bracket
                                 push(curOperator,opStack);
                             }
                             break;
-
+                        case 4: // reached end of string, continue
+                            break;
+                        case 3:                                                     //TODO top of stack is a '(' just continue
+                            push(curOperator, opStack); // top is a '(' so we should just push the next thing onto it
+                            break;
                         case 1: //current operators is higher precedance to current top
                             push(curOperator, opStack);
                             break;
@@ -255,14 +297,18 @@ char * postFix(token *ll) {
                         case 0://cur is lower precedance to top
                             //pop until end of stack, '(' is seen, or if precedence is the same as the new top
                             while(opStack->top != -1 || opStack->stackArr[opStack->top] != '(' || precedanceCheck(curOperator, opStack->stackArr[opStack->top] ) != -1) {
-                                postfixArr[postfixIDX] = pop(opStack); //pop top operator to array
+                                postfixArr[postfixIDX] = malloc(2); //operator & NULL terminator
+                                postfixArr[postfixIDX][0] = pop(opStack);      //POP old operator
+                                postfixArr[postfixIDX][1] = '\0';
                                 postfixIDX++;
                             }
                             push(curOperator, opStack); //push new operator
                             break;
 
                         case -1: //Same precedance                      //TODO will impliment ^ after all infix->postfix code is working
-                            postfixArr[postfixIDX] = pop(opStack);      //POP old operator
+                            postfixArr[postfixIDX] = malloc(2); //operator & NULL terminator
+                            postfixArr[postfixIDX][0] = pop(opStack);      //POP old operator
+                            postfixArr[postfixIDX][1] = '\0';
                             postfixIDX++;
                             push(curOperator,opStack);                  //Push new operator
                             break;
@@ -275,15 +321,20 @@ char * postFix(token *ll) {
         ll = ll->next;
     }// end of given LL
 
+
     //pop everything left on the stack
     while (opStack->top != -1) {
-        postfixArr[postfixIDX++] = pop(opStack);
+        postfixArr[postfixIDX] = malloc(2); //operator & NULL terminator
+        postfixArr[postfixIDX][0] = pop(opStack);      //POP old operator
+        postfixArr[postfixIDX][1] = '\0';
+        postfixIDX++;
     }
 
 
 
     free(opStack->stackArr);
     free(opStack);
+
     return postfixArr;
 }
 //support functions-------------
@@ -300,27 +351,32 @@ char getOperatorType(tokenType type) {
         return '(';
     if(type ==TOKEN_RPAREN)
         return ')';
+    if(type == TOKEN_EOF)
+        return '\0';
 
     //error, should have been given a operator but number or undefined
     exceptionTEST(3);
     return 0x00;
 }
-
-
 int precedanceCheck(char curOperator,char topStackOperator) {
     //returns 1 if current operators is higher precedance to current top
     //returns 0 if lower precedance to top
     //returns -1 if same precedance
-    //returns 2 if curent operator is '(' or ')'
-    //returns 3 if top is '('
-    if(topStackOperator == '(')
-        return 3;
+    //returns 2 if current operator is '(' or ')'
+    //returns 3 if top is '(', just push current onto stack
+
+
+
+    if( curOperator== '\0')
+       return 4;
 
     if(curOperator == '+'|| curOperator == '-') {
         if(topStackOperator == '+'|| topStackOperator == '-')
             return -1; // same precedance
         if(topStackOperator == '*'|| topStackOperator == '/')
             return 0; // lower precedance
+        if(topStackOperator == '(')
+            return 3; // ignore precedance, push to stack
     }
 
     if(curOperator == '*'|| curOperator == '/') {
@@ -328,6 +384,8 @@ int precedanceCheck(char curOperator,char topStackOperator) {
             return -1; // same precedance
         if(topStackOperator == '+'|| topStackOperator == '-')
             return 1; // greater precedance
+        if(topStackOperator == '(')
+            return 3; // ignore precedance, push to stack
     }
     else {
         return 2;// current operator is a '(' or ')'
@@ -335,10 +393,7 @@ int precedanceCheck(char curOperator,char topStackOperator) {
 
     //thow error, either stack or curOperator is not valid
     exceptionTEST(4);
-
-    //error
-    return -1;
-
+    return 4;
 }
 
 //Stack operations
@@ -370,6 +425,17 @@ char  peek(stack * st) {
     }
     return st->stackArr[st->top]; // show top of stack
 }
+
+//Postfix evaluation
+int postfixEval(char ** arr) {
+    int IDX = 0;
+    while(arr[IDX] != NULL) {
+
+
+    }
+    return 0;
+}
+
 
 //error handling
 void exceptionTEST(int type) {
@@ -412,7 +478,14 @@ void freeLL(token * ll) {
     freeLL(ll->next);
 }
 
+void printPostfix(char ** arr) {
+    int i = 0;
+    printf("test");
+    while(arr[i] != NULL) {
 
-
-
+        printf("%s",arr[i]);
+        i++;
+    }
+    printf("\n");
+}
 
